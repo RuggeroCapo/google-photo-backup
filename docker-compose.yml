@@ -1,0 +1,37 @@
+services:
+  photo-backup:
+    build: .
+    image: photo-backup-agent:latest
+    container_name: photo-backup
+    restart: unless-stopped
+    init: true
+    # Run as the owner of the photo library / bind mounts (Umbrel: 1000:1000).
+    user: "${PUID:-1000}:${PGID:-1000}"
+    env_file: .env
+    environment:
+      PHOTOS_DIR: /photos
+      DATABASE_PATH: /database/photo-backup.db
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+      LOG_DIR: /logs
+      PORT: 8080
+    ports:
+      - "${HOST_PORT:-8765}:8080"
+    volumes:
+      # Read-only: the agent can never modify or delete local photos.
+      - ${PHOTO_ROOT}:/photos:ro
+      - ./database:/database
+      - ./config:/config
+      - ./logs:/logs
+    # Leave time to abort the in-flight rclone upload and close SQLite cleanly.
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

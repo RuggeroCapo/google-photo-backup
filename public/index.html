@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Backup</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #fff; --text: #1d2330; --muted: #6b7385; --border: #e3e6ec;
+    --accent: #2f6fde; --ok: #1f9d55; --warn: #c98a00; --err: #d64545; --chip: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #9aa3b5; --border: #2a303b;
+      --accent: #5b8ff0; --ok: #3cc47c; --warn: #e0a72a; --err: #ef6a6a; --chip: #252b36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  h1 { font-size: 20px; margin: 0; flex: 1; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; background: var(--chip); }
+  .badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .healthy { color: var(--ok); } .degraded { color: var(--warn); } .down { color: var(--err); }
+  button { font: inherit; font-weight: 600; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .55; cursor: default; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 24px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .card .sub { color: var(--muted); font-size: 12px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  @media (max-width: 720px) { .row { grid-template-columns: 1fr; } }
+  .progress { height: 8px; background: var(--chip); border-radius: 99px; overflow: hidden; margin: 8px 0 4px; }
+  .progress > div { height: 100%; background: var(--ok); width: 0; transition: width .4s; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tabs button { padding: 4px 12px; font-weight: 500; }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td.path { overflow-wrap: anywhere; min-width: 200px; }
+  td.err { color: var(--err); overflow-wrap: anywhere; max-width: 420px; }
+  .st { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--chip); white-space: nowrap; }
+  .st.uploaded { color: var(--ok); } .st.failed { color: var(--err); } .st.uploading { color: var(--accent); }
+  .st.pending { color: var(--warn); } .st.ignored { color: var(--muted); }
+  .issues { background: color-mix(in srgb, var(--warn) 14%, var(--panel)); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); margin-bottom: 14px; }
+  .issues ul { margin: 0; padding-left: 18px; }
+  .muted { color: var(--muted); }
+  .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; gap: 8px; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>📷 Photo Backup → Google Photos</h1>
+    <span id="health" class="badge">…</span>
+    <button id="btn-retry">Retry failed</button>
+    <button id="btn-sync" class="primary">Sync now</button>
+  </header>
+
+  <section id="issues" class="card issues" hidden>
+    <h2>Attenzione</h2>
+    <ul id="issues-list"></ul>
+  </section>
+
+  <section class="grid">
+    <div class="card"><div class="label">File locali</div><div class="value" id="local-files">–</div><div class="sub" id="local-bytes"></div></div>
+    <div class="card"><div class="label">Caricati</div><div class="value healthy" id="uploaded">–</div><div class="sub" id="uploaded-bytes"></div></div>
+    <div class="card"><div class="label">In coda</div><div class="value" id="pending">–</div><div class="sub" id="pending-bytes"></div></div>
+    <div class="card"><div class="label">Falliti</div><div class="value" id="failed">–</div><div class="sub" id="ignored"></div></div>
+  </section>
+
+  <section class="row">
+    <div class="card">
+      <h2>Stato</h2>
+      <div class="progress"><div id="progress"></div></div>
+      <div class="sub muted" id="progress-label"></div>
+      <dl style="margin-top:10px">
+        <dt>Upload ora</dt><dd id="upload-state">–</dd>
+        <dt>Finestra</dt><dd id="window">–</dd>
+        <dt>Scansione</dt><dd id="scan">–</dd>
+        <dt>Watcher</dt><dd id="watcher">–</dd>
+        <dt>In analisi</dt><dd id="ingest">–</dd>
+        <dt>Uptime</dt><dd id="uptime">–</dd>
+      </dl>
+    </div>
+    <div class="card">
+      <h2>Upload corrente</h2>
+      <dl>
+        <dt>File</dt><dd id="current">nessuno</dd>
+        <dt>Dimensione</dt><dd id="current-size">–</dd>
+        <dt>Iniziato</dt><dd id="current-start">–</dd>
+      </dl>
+      <h2 style="margin-top:16px">Ultimo upload</h2>
+      <dl>
+        <dt>File</dt><dd id="last-file">–</dd>
+        <dt>Quando</dt><dd id="last-at">–</dd>
+      </dl>
+      <h2 style="margin-top:16px">Ultimo errore</h2>
+      <div id="last-error" class="muted">nessuno</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="tabs" id="tabs">
+      <button data-status="" class="active">Coda</button>
+      <button data-status="failed">Errori</button>
+      <button data-status="uploaded">Caricati</button>
+      <button data-status="ignored">Ignorati</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>File</th><th>Stato</th><th>Dim.</th><th>Tentativi</th><th>Aggiornato</th><th>Dettagli</th></tr></thead>
+        <tbody id="queue"><tr><td colspan="6" class="muted">Caricamento…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span class="muted" id="pager-label"></span>
+      <span><button id="prev">‹</button> <button id="next">›</button></span>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const PAGE = 50;
+let tab = '';
+let offset = 0;
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (n) => (n ?? 0).toLocaleString('it-IT');
+function bytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1);
+  return (n / 1024 ** i).toFixed(i ? 1 : 0) + ' ' + u[i];
+}
+function when(iso) {
+  if (!iso) return '–';
+  const d = new Date(iso);
+  const s = Math.round((Date.now() - d) / 1000);
+  const rel = s < 60 ? `${s}s fa` : s < 3600 ? `${Math.round(s / 60)} min fa` : s < 86400 ? `${Math.round(s / 3600)} h fa` : `${Math.round(s / 86400)} g fa`;
+  return `${d.toLocaleString('it-IT')} <span class="muted">(${s >= 0 ? rel : 'tra ' + rel.replace(' fa', '')})</span>`;
+}
+function duration(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  return (d ? d + 'g ' : '') + (h ? h + 'h ' : '') + m + 'm';
+}
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2500);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  return r.json();
+}
+
+async function refreshStatus() {
+  try {
+    const [s, st] = await Promise.all([api('/api/status'), api('/api/stats')]);
+    const h = $('health'); h.textContent = s.status; h.className = 'badge ' + s.status;
+
+    $('issues').hidden = !s.issues.length;
+    $('issues-list').innerHTML = s.issues.map((i) => `<li>${esc(i)}</li>`).join('');
+
+    $('local-files').textContent = num(st.localFiles);
+    $('local-bytes').textContent = bytes(st.localBytes);
+    $('uploaded').textContent = num(st.byStatus.uploaded.count);
+    $('uploaded-bytes').textContent = bytes(st.byStatus.uploaded.bytes);
+    $('pending').textContent = num(s.queueSize);
+    $('pending-bytes').textContent = bytes(st.byStatus.pending.bytes + st.byStatus.uploading.bytes);
+    $('failed').textContent = num(s.failed);
+    $('failed').className = 'value ' + (s.failed ? 'down' : '');
+    const ign = st.byStatus.ignored.count;
+    $('ignored').textContent = ign ? `${num(ign)} ignorati (${Object.entries(st.ignoredByReason).map(([k, v]) => `${k}: ${num(v)}`).join(', ')})` : '';
+
+    const todo = st.byStatus.uploaded.count + s.queueSize + s.failed;
+    const pct = todo ? (st.byStatus.uploaded.count / todo) * 100 : 100;
+    $('progress').style.width = pct.toFixed(1) + '%';
+    $('progress-label').textContent = `${pct.toFixed(1)}% del backup completato (${bytes(st.byStatus.uploaded.bytes)} caricati)`;
+
+    let state = s.uploadingNow ? '<span class="healthy">attivo</span>' : '<span class="muted">in attesa</span>';
+    if (s.manualSync) state += ' · sync manuale';
+    if (s.paused) state = `<span class="degraded">in pausa fino a ${esc(new Date(s.paused.until).toLocaleTimeString('it-IT'))}</span> — ${esc(s.paused.reason)}`;
+    $('upload-state').innerHTML = state;
+    $('window').innerHTML = s.schedule.window === 'always' ? 'sempre attiva'
+      : `${esc(s.schedule.window)} — ${s.schedule.open ? '<span class="healthy">aperta</span>' : 'chiusa, apre ' + when(s.schedule.nextOpenAt)}`;
+    $('scan').innerHTML = s.scanning ? 'in corso…' : s.lastScan
+      ? `ultima ${when(s.lastScan.finishedAt)}, ${num(s.lastScan.filesSeen)} file` + (s.lastScan.error ? ` — <span class="down">${esc(s.lastScan.error)}</span>` : '')
+      : '–';
+    $('watcher').textContent = !s.watcher.enabled ? 'disabilitato' : s.watcher.ready ? 'attivo' : 'avvio…';
+    $('ingest').textContent = `${num(s.ingest.waitingForStability)} in attesa di stabilità, ${num(s.ingest.hashing)} in hashing`;
+    $('uptime').textContent = duration(s.uptimeSec) + ' · v' + s.version;
+
+    const c = s.currentUpload;
+    $('current').textContent = c ? c.path + (s.currentUploads.length > 1 ? ` (+${s.currentUploads.length - 1})` : '') : 'nessuno';
+    $('current-size').textContent = c ? bytes(c.size) : '–';
+    $('current-start').innerHTML = c ? when(c.startedAt) : '–';
+    $('last-file').textContent = s.lastUploadFile ?? '–';
+    $('last-at').innerHTML = when(s.lastUpload);
+    $('last-error').innerHTML = s.lastError
+      ? `<span class="down">[${esc(s.lastError.kind)}]</span> ${esc(s.lastError.message)}<br><span class="muted">${esc(s.lastError.path ?? '')} · ${when(s.lastError.at)}</span>`
+      : 'nessuno';
+  } catch (e) {
+    const h = $('health'); h.textContent = 'non raggiungibile'; h.className = 'badge down';
+  }
+}
+
+async function refreshQueue() {
+  try {
+    const q = await api(`/api/queue?limit=${PAGE}&offset=${offset}` + (tab ? `&status=${tab}` : ''));
+    $('queue').innerHTML = q.items.length ? q.items.map((f) => {
+      let detail = f.error ?? '';
+      if (f.status === 'uploaded') detail = f.remote_path ?? '';
+      if (f.status === 'pending' && f.next_attempt_at) detail = `retry ${when(new Date(f.next_attempt_at).toISOString())} — ${f.error ?? ''}`;
+      const at = f.status === 'uploaded' ? f.uploaded_at : f.updated_at;
+      const cls = f.status === 'failed' || (f.status === 'pending' && f.error) ? 'err' : 'muted';
+      return `<tr><td class="path">${esc(f.path)}</td><td><span class="st ${f.status}">${f.status}${f.ignored_reason ? ' · ' + esc(f.ignored_reason) : ''}</span></td>`
+        + `<td>${bytes(f.size)}</td><td>${f.retry_count}</td><td>${when(at)}</td><td class="${cls}">${esc(detail)}</td></tr>`;
+    }).join('') : '<tr><td colspan="6" class="muted">Nessun file</td></tr>';
+    $('pager-label').textContent = q.total ? `${num(offset + 1)}–${num(Math.min(offset + PAGE, q.total))} di ${num(q.total)}` : '';
+    $('prev').disabled = offset === 0;
+    $('next').disabled = offset + PAGE >= q.total;
+  } catch (e) { /* status badge already shows connectivity */ }
+}
+
+$('tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('active', x === b));
+  tab = b.dataset.status; offset = 0; refreshQueue();
+});
+$('prev').onclick = () => { offset = Math.max(0, offset - PAGE); refreshQueue(); };
+$('next').onclick = () => { offset += PAGE; refreshQueue(); };
+$('btn-sync').onclick = async () => {
+  try { await api('/api/sync', { method: 'POST' }); toast('Sync avviato'); refresh(); } catch (e) { toast('Errore: ' + e.message); }
+};
+$('btn-retry').onclick = async () => {
+  try { const r = await api('/api/retry-failed', { method: 'POST' }); toast(`${r.requeued} file rimessi in coda`); refresh(); } catch (e) { toast('Errore: ' + e.message); }
+};
+
+function refresh() { refreshStatus(); refreshQueue(); }
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
