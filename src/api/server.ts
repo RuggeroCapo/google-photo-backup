@@ -5,12 +5,15 @@ import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } 
 import type { Logger } from 'pino';
 import type { PhotoBackupAgent } from '../app.js';
 import { FILE_STATUSES, type FileStatus } from '../types.js';
+import { Thumbnailer, ThumbnailError } from './thumbnails.js';
 
 const DEFAULT_PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public');
 
 export interface ServerOptions {
   logger?: Logger;
   publicDir?: string;
+  /** Where generated thumbnails are cached (default: `thumbs/` next to the database). */
+  thumbCacheDir?: string;
 }
 
 export function buildServer(agent: PhotoBackupAgent, options: ServerOptions = {}): FastifyInstance {
@@ -58,9 +61,37 @@ export function buildServer(agent: PhotoBackupAgent, options: ServerOptions = {}
     return { ...result, limit: lim ?? 50, offset: off ?? 0 };
   });
 
+  const thumbs = new Thumbnailer(
+    agent.config.photosDir,
+    options.thumbCacheDir ?? path.join(path.dirname(agent.config.databasePath), 'thumbs'),
+  );
+
+  app.get<{ Querystring: { path?: string } }>('/api/thumb', async (req, reply) => {
+    try {
+      const file = await thumbs.get(req.query.path ?? '');
+      return reply
+        .header('Cache-Control', 'private, max-age=86400')
+        .type('image/jpeg')
+        .send(fs.createReadStream(file));
+    } catch (e) {
+      if (e instanceof ThumbnailError) return reply.code(e.code).send({ error: e.message });
+      throw e;
+    }
+  });
+
   app.post('/api/sync', async (_req, reply) => {
     agent.syncNow();
     return reply.code(202).send({ ok: true, manualSync: true });
+  });
+
+  app.post('/api/pause', async () => {
+    agent.pause();
+    return { ok: true, userPaused: true };
+  });
+
+  app.post('/api/resume', async () => {
+    agent.resume();
+    return { ok: true, userPaused: false };
   });
 
   app.post('/api/retry-failed', async () => {

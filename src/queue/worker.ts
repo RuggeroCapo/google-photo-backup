@@ -54,10 +54,13 @@ export class UploadWorker {
   private stopping = false;
   private readonly wakers = new Set<() => void>();
   private readonly abort = new AbortController();
+  private pauseAbort = new AbortController();
   private readonly clock: () => number;
 
   readonly current = new Map<number, CurrentUpload>();
   manualSync = false;
+  /** Pause requested by the user: stays until resumed (not persisted across restarts). */
+  userPaused = false;
   pausedUntil: number | null = null;
   pauseReason: string | null = null;
   lastError: WorkerError | null = null;
@@ -90,9 +93,24 @@ export class UploadWorker {
 
   /** Upload now, regardless of the schedule, until the queue is drained. Also clears pauses. */
   syncNow(): void {
+    if (this.userPaused) this.resume();
     this.manualSync = true;
     this.pausedUntil = null;
     this.pauseReason = null;
+    this.notify();
+  }
+
+  /** Stop uploading until `resume()`. In-flight uploads are aborted and go back to `pending`. */
+  pauseUploads(): void {
+    this.userPaused = true;
+    this.manualSync = false;
+    this.pauseAbort.abort();
+  }
+
+  resume(): void {
+    if (!this.userPaused) return;
+    this.userPaused = false;
+    this.pauseAbort = new AbortController();
     this.notify();
   }
 
@@ -102,6 +120,7 @@ export class UploadWorker {
   }
 
   canUploadNow(): boolean {
+    if (this.userPaused) return false;
     const now = this.clock();
     if (this.pausedUntil !== null && now < this.pausedUntil) return false;
     return this.manualSync || this.opts.window.isOpen(new Date(now));
@@ -124,6 +143,10 @@ export class UploadWorker {
     while (!this.stopping) {
       try {
         const now = this.clock();
+        if (this.userPaused) {
+          await this.sleep(idlePoll);
+          continue;
+        }
         if (this.pausedUntil !== null) {
           if (now < this.pausedUntil) {
             await this.sleep(Math.min(this.pausedUntil - now, idlePoll));
@@ -177,7 +200,7 @@ export class UploadWorker {
       return;
     }
 
-    if (this.stopping) {
+    if (this.stopping || this.userPaused) {
       repo.requeue(job.id);
       return;
     }
@@ -204,7 +227,7 @@ export class UploadWorker {
     const started = this.clock();
     let result: UploadResult;
     try {
-      result = await this.opts.uploader.upload(file, { signal: this.abort.signal });
+      result = await this.opts.uploader.upload(file, { signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]) });
     } catch (e) {
       result = { ok: false, kind: 'unknown', retryable: true, error: (e as Error).message ?? String(e) };
     } finally {

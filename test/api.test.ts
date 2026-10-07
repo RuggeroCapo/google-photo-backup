@@ -37,6 +37,15 @@ afterEach(async () => {
 });
 
 describe('API', () => {
+  it('GET /api/thumb rejects traversal and unsupported types, 404s missing files', async () => {
+    const get = (q: string) => app.inject({ method: 'GET', url: `/api/thumb?path=${encodeURIComponent(q)}` });
+    expect((await get('../../etc/passwd')).statusCode).toBe(400);
+    expect((await get('')).statusCode).toBe(400);
+    expect((await get('b.mp4')).statusCode).toBe(415);
+    expect((await get('nope.jpg')).statusCode).toBe(404);
+    expect((await get('a.jpg')).statusCode).toBe(415); // not a decodable image
+  });
+
   it('GET /health', async () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);

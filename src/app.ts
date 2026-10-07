@@ -155,6 +155,17 @@ export class PhotoBackupAgent {
     if (!this.scanner.running) void this.scanner.scan().then(() => this.worker.notify());
   }
 
+  /** Stop uploading (aborting the in-flight upload) until `resume()`. Scanning continues. */
+  pause(): void {
+    this.logger.info('uploads paused by user');
+    this.worker.pauseUploads();
+  }
+
+  resume(): void {
+    this.logger.info('uploads resumed by user');
+    this.worker.resume();
+  }
+
   retryFailed(): number {
     const n = this.repo.retryFailed();
     this.logger.info({ requeued: n }, 'failed files re-queued');
@@ -210,6 +221,7 @@ export class PhotoBackupAgent {
       currentUploads: current,
       uploadingNow: this.worker.canUploadNow(),
       manualSync: this.worker.manualSync,
+      userPaused: this.worker.userPaused,
       schedule: {
         window: this.window.describe(),
         open: this.window.isOpen(now),

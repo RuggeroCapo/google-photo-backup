@@ -91,4 +91,22 @@ describe('scheduler + worker', () => {
     await sleep(100);
     expect(agent.repo.getByPath('c.jpg')!.status).toBe('pending');
   });
+
+  it('user pause blocks uploads until resumed; "Sync now" also resumes', async () => {
+    const { agent, uploader, clock } = await setup(at('12:00'));
+    agent.pause();
+    clock.set(at('03:00')); // window open, but the user paused
+    agent.worker.notify();
+    expect(agent.status()).toMatchObject({ userPaused: true, uploadingNow: false });
+    await sleep(150);
+    expect(uploader.calls).toHaveLength(0);
+
+    agent.resume();
+    await waitFor(() => agent.repo.countByStatus('uploaded') === 2);
+    expect(agent.status().userPaused).toBe(false);
+
+    agent.pause();
+    agent.syncNow();
+    expect(agent.status().userPaused).toBe(false);
+  });
 });
